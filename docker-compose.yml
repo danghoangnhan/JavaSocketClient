@@ -1,0 +1,136 @@
+version: '2.1'
+services:
+  zoo1:
+    image: zookeeper:3.4.9
+    hostname: zoo1
+    ports:
+      - "2182:2182"
+    networks:
+      - flemabus
+    environment:
+      ZOO_MY_ID: 1
+      ZOO_PORT: 2182
+      ZOO_SERVERS: server.1=zoo1:2888:3888
+
+  kafka1:
+    image: confluentinc/cp-kafka:5.5.1
+    hostname: kafka1
+    ports:
+      - "9092:9092"
+      - "9998:9998"
+    environment:
+      KAFKA_ADVERTISED_LISTENERS: LISTENER_DOCKER_INTERNAL://kafka1:9092,LISTENER_DOCKER_EXTERNAL://${DOCKER_HOST_IP:-127.0.0.1}:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: LISTENER_DOCKER_INTERNAL:PLAINTEXT,LISTENER_DOCKER_EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: LISTENER_DOCKER_INTERNAL
+      KAFKA_ZOOKEEPER_CONNECT: "zoo1:2182"
+      KAFKA_BROKER_ID: 1
+      KAFKA_LOG4J_LOGGERS: "kafka.controller=INFO,kafka.producer.async.DefaultEventHandler=INFO,state.change.logger=INFO"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_JMX_PORT: 9998
+      KAFKA_JMX_HOSTNAME: ${DOCKER_HOST_IP:-127.0.0.1}
+      KAFKA_CONFLUENT_SUPPORT_METRICS_ENABLE: 'false'
+    env_file: envs/development.env
+    depends_on:
+      - zoo1
+    networks:
+      - flemabus
+  kafkadrop:
+    image: obsidiandynamics/kafdrop
+    container_name: 'flemabus-kafkadrop'
+    ports:
+      - "9001:9000"
+    environment:
+      KAFKA_BROKERCONNECT: kafka1:9092,kafka1:9092
+      JVM_OPTS: "-Xms32M -Xmx64M"
+      SERVER_SERVLET_CONTEXTPATH: "/"
+    depends_on:
+      - kafka1
+    networks:
+      - flemabus
+  datareceiver:
+    image: 'flemabus-datareceiver'
+    container_name: 'flemabus-datareceiver'
+    build:
+      context: ./Java_DataReceiver
+      dockerfile: datareceiver.Dockerfile
+      args:
+        - NODE_ENV=local
+    env_file: envs/development.env
+    depends_on:
+      - kafka1
+      - database
+    volumes:
+      - './flemabus/logs:/logs'
+    networks:
+      - flemabus
+  jas106:
+    image: 'flemabus-jas106'
+    container_name: 'flemabus-gateway106'
+    build:
+      context: ./Java_Gateway
+      dockerfile: jas106.Dockerfile
+      args:
+        - NODE_ENV=local
+    ports:
+      - "9106:9106"
+      - "9206:8000"
+    env_file: envs/development.env
+    depends_on:
+      - kafka1
+    volumes:
+      - './flemabus/logs:/logs'
+    networks:
+      - flemabus
+  jas208:
+    image: 'flemabus-jas208'
+    container_name: 'flemabus-gateway208'
+    build:
+      context: ./Java_Gateway
+      dockerfile: jas208.Dockerfile
+      args:
+        - NODE_ENV=local
+    ports:
+      - "9208:9208"
+    env_file: envs/development.env
+    depends_on:
+      - kafka1
+    volumes:
+      - './flemabus/logs:/logs'
+    networks:
+      - flemabus
+  scheduler:
+    image: 'flemabus-scheduler'
+    container_name: 'flemabus-scheduler'
+    build:
+      context: .
+      dockerfile: Java_Scheduler/scheduler.Dockerfile
+      args:
+        - NODE_ENV=local
+    env_file: envs/development.env
+    depends_on:
+      - database
+    volumes:
+      - './flemabus/logs:/logs'
+    networks:
+      - flemabus
+  database:
+    build:
+      context: "./mysql/5.7"
+    container_name: 'flemabus-database'
+    restart: 'always'
+    ports:
+      - "0.0.0.0:3306:3306"
+    env_file:
+      - envs/development.env
+    volumes:
+      - './flemabus/root/docker/test-mysql/conf.d:/etc/mysql/conf.d \'
+      - './flemabus/storage/docker/mysql-datadir:/var/lib/mysql \'
+    networks:
+      - flemabus
+networks:
+  flemabus:
+    driver: bridge
+    ipam:
+      driver: default
